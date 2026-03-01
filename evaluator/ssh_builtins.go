@@ -4,8 +4,10 @@ import (
 	"base/object"
 	"net"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 func RegisterSSHBuiltins() {
@@ -36,12 +38,22 @@ func RegisterSSHBuiltins() {
 				return newError("unable to parse private key: %v", err)
 			}
 
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return newError("unable to find home directory: %v", err)
+			}
+			knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
+			hostKeyCallback, err := knownhosts.New(knownHostsPath)
+			if err != nil {
+				return newError("unable to load known_hosts (%s): %v", knownHostsPath, err)
+			}
+
 			config := &ssh.ClientConfig{
 				User: user,
 				Auth: []ssh.AuthMethod{
 					ssh.PublicKeys(signer),
 				},
-				HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+				HostKeyCallback: hostKeyCallback,
 			}
 
 			client, err := ssh.Dial("tcp", net.JoinHostPort(host, "22"), config)

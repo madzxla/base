@@ -390,7 +390,18 @@ func RegisterServerBuiltins() {
 			fs := http.FileServer(http.Dir(dir.Value))
 
 			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-				fullPath := filepath.Join(dir.Value, filepath.Clean(r.URL.Path))
+				absDir, err := filepath.Abs(dir.Value)
+				if err != nil {
+					http.Error(w, "500 Internal Server Error", 500)
+					return
+				}
+
+				fullPath := filepath.Join(absDir, filepath.Clean(r.URL.Path))
+
+				if fullPath != absDir && !strings.HasPrefix(fullPath, absDir+string(filepath.Separator)) {
+					http.Error(w, "403 Forbidden", 403)
+					return
+				}
 
 				info, err := os.Stat(fullPath)
 				if err != nil {

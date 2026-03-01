@@ -10,7 +10,7 @@ import (
 
 type ObjectType string
 
-const VERSION = "0.2.1"
+const VERSION = "0.2.2"
 
 const (
 	INTEGER_OBJ      = "INTEGER"
