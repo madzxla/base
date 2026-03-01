@@ -247,7 +247,29 @@ func RegisterDBBuiltins() {
 			}
 			switch c := conn.(type) {
 			case *sql.DB:
-				return newError("SQL update via HASH not implemented; use db.exec for now")
+				matchMap, mok := match.(map[string]interface{})
+				updateMap, uok := update.(map[string]interface{})
+				if !mok || len(matchMap) == 0 {
+					return newError("db.update: where clause must be a non-empty HASH")
+				}
+				if !uok || len(updateMap) == 0 {
+					return newError("db.update: update values must be a non-empty HASH")
+				}
+				setClauses := make([]string, 0, len(updateMap))
+				qargs := make([]interface{}, 0, len(updateMap)+len(matchMap))
+				for k, v := range updateMap {
+					setClauses = append(setClauses, k+" = ?")
+					qargs = append(qargs, v)
+				}
+				whereClauses := make([]string, 0, len(matchMap))
+				for k, v := range matchMap {
+					whereClauses = append(whereClauses, k+" = ?")
+					qargs = append(qargs, v)
+				}
+				q := "UPDATE " + target + " SET " + strings.Join(setClauses, ", ") + " WHERE " + strings.Join(whereClauses, " AND ")
+				if _, err := c.Exec(q, qargs...); err != nil {
+					return newError("sql update error: %s", err.Error())
+				}
 			case *mongo.Client:
 				coll := c.Database("test").Collection(target)
 				_, err := coll.UpdateMany(context.TODO(), match, update)
@@ -281,7 +303,20 @@ func RegisterDBBuiltins() {
 			}
 			switch c := conn.(type) {
 			case *sql.DB:
-				return newError("SQL delete via HASH not implemented; use db.exec for now")
+				matchMap, ok := match.(map[string]interface{})
+				if !ok || len(matchMap) == 0 {
+					return newError("db.delete: where clause must be a non-empty HASH")
+				}
+				whereClauses := make([]string, 0, len(matchMap))
+				qargs := make([]interface{}, 0, len(matchMap))
+				for k, v := range matchMap {
+					whereClauses = append(whereClauses, k+" = ?")
+					qargs = append(qargs, v)
+				}
+				q := "DELETE FROM " + target + " WHERE " + strings.Join(whereClauses, " AND ")
+				if _, err := c.Exec(q, qargs...); err != nil {
+					return newError("sql delete error: %s", err.Error())
+				}
 			case *mongo.Client:
 				coll := c.Database("test").Collection(target)
 				_, err := coll.DeleteMany(context.TODO(), match)
