@@ -44,7 +44,8 @@ func main() {
 		fmt.Printf("B.A.S.E. version %s\n", object.VERSION)
 		checkVersion(false)
 	case "update", "--update":
-		updateBase()
+		force := len(os.Args) > 2 && os.Args[2] == "--force"
+		updateBase(force)
 	case "-e":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: base -e \"code\"")
@@ -119,6 +120,7 @@ func printHelp() {
 	fmt.Printf("  base -e \"code\"                Evaluate a one-liner\n")
 	fmt.Printf("  base -v, --version            Print version\n")
 	fmt.Printf("  base update                   Update B.A.S.E. to latest version\n")
+	fmt.Printf("  base update --force           Force reinstall current version\n")
 	fmt.Printf("  base help                     Show this help menu\n")
 	fmt.Printf("  base check <file.base>        Check syntax without executing\n")
 	fmt.Printf("  base new <name>               Scaffold a new project\n")
@@ -466,7 +468,7 @@ func checkVersion(quiet bool) {
 	}
 }
 
-func updateBase() {
+func updateBase(force bool) {
 	fmt.Printf("%sChecking for updates...%s\n", Blue, Reset)
 
 	client := &http.Client{
@@ -499,20 +501,24 @@ func updateBase() {
 	latest := strings.TrimPrefix(release.TagName, "v")
 	current := strings.TrimPrefix(object.VERSION, "v")
 
-	if latest == current {
+	if latest == current && !force {
 		fmt.Printf("%sB.A.S.E. is already at the latest version (v%s).%s\n", Green, object.VERSION, Reset)
+		fmt.Printf("To reinstall anyway, run: %sbase update --force%s\n", Cyan, Reset)
 		return
 	}
 
-	fmt.Printf("A new version is available: %s%s%s\n", Green, latest, Reset)
-	fmt.Printf("Do you want to update? (Y/n): ")
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
-
-	if input != "" && input != "y" && input != "yes" {
-		fmt.Println("Update cancelled.")
-		return
+	if force {
+		fmt.Printf("%sForce reinstalling v%s...%s\n", Blue, current, Reset)
+	} else {
+		fmt.Printf("A new version is available: %s%s%s\n", Green, latest, Reset)
+		fmt.Printf("Do you want to update? (Y/n): ")
+		reader := bufio.NewReader(os.Stdin)
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+		if input != "" && input != "y" && input != "yes" {
+			fmt.Println("Update cancelled.")
+			return
+		}
 	}
 
 	fmt.Printf("%sUpdating B.A.S.E....%s\n", Blue, Reset)
