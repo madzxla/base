@@ -11,13 +11,11 @@ const (
 	ILLEGAL = "ILLEGAL"
 	EOF     = "EOF"
 
-	
-	IDENT  = "IDENT"  
-	INT    = "INT"    
-	FLOAT  = "FLOAT"  
-	STRING = "STRING" 
+	IDENT  = "IDENT"
+	INT    = "INT"
+	FLOAT  = "FLOAT"
+	STRING = "STRING"
 
-	
 	ASSIGN   = "="
 	PLUS     = "+"
 	MINUS    = "-"
@@ -34,7 +32,6 @@ const (
 	LTE    = "<="
 	GTE    = ">="
 
-	
 	AND         = "and"
 	OR          = "or"
 	NOT         = "not"
@@ -45,11 +42,13 @@ const (
 	LEFT_SHIFT  = "<<"
 	RIGHT_SHIFT = ">>"
 
-	
-	QUESTION = "?"
-	COLON    = ":"
+	QUESTION      = "?"
+	COLON         = ":"
+	NULL_COALESCE = "??"
+	ARROW         = "=>"
+	BACKTICK      = "`"
+	SPREAD        = "..."
 
-	
 	COMMA     = ","
 	SEMICOLON = ";"
 	DOT       = "."
@@ -61,7 +60,6 @@ const (
 	LBRACKET = "["
 	RBRACKET = "]"
 
-	
 	FUNCTION = "FUNCTION"
 	LET      = "LET"
 	GLOBAL   = "GLOBAL"
@@ -82,10 +80,16 @@ const (
 	ASYNC    = "ASYNC"
 	SPAWN    = "SPAWN"
 	SCHEDULE = "SCHEDULE"
+	NULL     = "NULL"
+	MATCH    = "MATCH"
+	CASE     = "CASE"
+	DEFAULT  = "DEFAULT"
+	ENUM     = "ENUM"
 )
 
 var keywords = map[string]TokenType{
 	"function": FUNCTION,
+	"func":     FUNCTION,
 	"let":      LET,
 	"global":   GLOBAL,
 	"true":     TRUE,
@@ -108,6 +112,11 @@ var keywords = map[string]TokenType{
 	"and":      AND,
 	"or":       OR,
 	"not":      NOT,
+	"null":     NULL,
+	"match":    MATCH,
+	"case":     CASE,
+	"default":  DEFAULT,
+	"enum":     ENUM,
 }
 
 func LookupIdent(ident string) TokenType {

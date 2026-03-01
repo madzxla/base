@@ -10,7 +10,7 @@ import (
 
 type ObjectType string
 
-const VERSION = "0.1.0"
+const VERSION = "0.2.0"
 
 const (
 	INTEGER_OBJ      = "INTEGER"
@@ -103,6 +103,10 @@ func (e *Environment) Root() *Environment {
 	return e.outer.Root()
 }
 
+func (e *Environment) Outer() *Environment {
+	return e.outer
+}
+
 func (e *Environment) Add(delta int) {
 	if e.wg != nil {
 		e.wg.Add(delta)
@@ -149,12 +153,12 @@ func (e *Environment) Export() *Hash {
 	return &Hash{Pairs: pairs}
 }
 
-func (e *Environment) Update(name string, val Object) Object {
+func (e *Environment) Update(name string, val Object) (Object, bool) {
 	e.mu.Lock()
 	if _, ok := e.store[name]; ok {
 		e.store[name] = val
 		e.mu.Unlock()
-		return val
+		return val, true
 	}
 	e.mu.Unlock()
 
@@ -162,14 +166,12 @@ func (e *Environment) Update(name string, val Object) Object {
 		return e.outer.Update(name, val)
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.store[name] = val
-	return val
+	return nil, false
 }
 
 type Function struct {
 	Parameters []*ast.Identifier
+	Defaults   map[string]ast.Expression
 	Body       *ast.BlockStatement
 	Env        *Environment
 }

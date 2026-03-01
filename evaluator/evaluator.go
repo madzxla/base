@@ -40,14 +40,16 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 			return val
 		}
 		env.Set(node.Name.Value, val)
+		return NULL
 	case *ast.AssignStatement:
 		val := Eval(node.Value, env)
 		if isError(val) {
 			return val
 		}
-
-		env.Update(node.Name.Value, val)
-
+		if _, ok := env.Update(node.Name.Value, val); !ok {
+			return newError("identifier not found: %s", node.Name.Value)
+		}
+		return NULL
 	case *ast.Identifier:
 		return evalIdentifier(node, env)
 	case *ast.IntegerLiteral:
@@ -65,6 +67,44 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		}
 		return evalPrefixExpression(node.Operator, right)
 	case *ast.InfixExpression:
+		// Short-circuit operators: and, or, ??
+		switch node.Operator {
+		case "and":
+			left := Eval(node.Left, env)
+			if isError(left) {
+				return left
+			}
+			if !isTruthy(left) {
+				return FALSE
+			}
+			right := Eval(node.Right, env)
+			if isError(right) {
+				return right
+			}
+			return nativeBoolToBooleanObject(isTruthy(right))
+		case "or":
+			left := Eval(node.Left, env)
+			if isError(left) {
+				return left
+			}
+			if isTruthy(left) {
+				return TRUE
+			}
+			right := Eval(node.Right, env)
+			if isError(right) {
+				return right
+			}
+			return nativeBoolToBooleanObject(isTruthy(right))
+		case "??":
+			left := Eval(node.Left, env)
+			if isError(left) {
+				return left
+			}
+			if left != NULL {
+				return left
+			}
+			return Eval(node.Right, env)
+		}
 		left := Eval(node.Left, env)
 		if isError(left) {
 			return left
@@ -88,10 +128,14 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return evalThrowStatement(node, env)
 	case *ast.SpawnStatement:
 		return evalSpawnStatement(node, env)
+	case *ast.NullLiteral:
+		return NULL
 	case *ast.FunctionLiteral:
 		params := node.Parameters
 		body := node.Body
-		return &object.Function{Parameters: params, Body: body, Env: env}
+		fn := &object.Function{Parameters: params, Body: body, Env: env}
+		fn.Defaults = node.Defaults
+		return fn
 	case *ast.CallExpression:
 		function := Eval(node.Function, env)
 		if isError(function) {
@@ -104,6 +148,22 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		return applyFunction(env, function, args)
 	case *ast.TernaryExpression:
 		return evalTernaryExpression(node, env)
+	case *ast.TemplateLiteral:
+		return evalTemplateLiteral(node, env)
+	case *ast.ArrowFunctionLiteral:
+		return evalArrowFunction(node, env)
+	case *ast.MatchExpression:
+		return evalMatchExpression(node, env)
+	case *ast.SpreadExpression:
+		val := Eval(node.Value, env)
+		if isError(val) {
+			return val
+		}
+		return val
+	case *ast.DestructureLetStatement:
+		return evalDestructureLetStatement(node, env)
+	case *ast.EnumStatement:
+		return evalEnumStatement(node, env)
 	case *ast.PropertyAccessExpression:
 		return evalPropertyAccessExpression(node, env)
 	case *ast.IndexExpression:
@@ -117,16 +177,32 @@ func Eval(node ast.Node, env *object.Environment) object.Object {
 		}
 		return evalIndexExpression(left, index)
 	case *ast.ArrayLiteral:
-		elements := evalExpressions(node.Elements, env)
-		if len(elements) == 1 && isError(elements[0]) {
-			return elements[0]
+		var elements []object.Object
+		for _, el := range node.Elements {
+			if spread, ok := el.(*ast.SpreadExpression); ok {
+				val := Eval(spread.Value, env)
+				if isError(val) {
+					return val
+				}
+				if arr, ok := val.(*object.Array); ok {
+					elements = append(elements, arr.Elements...)
+				} else {
+					elements = append(elements, val)
+				}
+			} else {
+				val := Eval(el, env)
+				if isError(val) {
+					return val
+				}
+				elements = append(elements, val)
+			}
 		}
 		return &object.Array{Elements: elements}
 	case *ast.HashLiteral:
 		return evalHashLiteral(node, env)
 	}
 
-	return nil
+	return NULL
 }
 
 func evalProgram(program *ast.Program, env *object.Environment) object.Object {
@@ -214,19 +290,22 @@ func evalBangOperatorExpression(right object.Object) object.Object {
 }
 
 func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
-	if right.Type() != object.INTEGER_OBJ {
+	switch r := right.(type) {
+	case *object.Integer:
+		return &object.Integer{Value: -r.Value}
+	case *object.Float:
+		return &object.Float{Value: -r.Value}
+	default:
 		return newError("unknown operator: -%s", right.Type())
 	}
-	value := right.(*object.Integer).Value
-	return &object.Integer{Value: -value}
 }
 
 func evalInfixExpression(operator string, left, right object.Object) object.Object {
 	switch {
-	case operator == "and":
-		return nativeBoolToBooleanObject(isTruthy(left) && isTruthy(right))
-	case operator == "or":
-		return nativeBoolToBooleanObject(isTruthy(left) || isTruthy(right))
+	case operator == "==":
+		return nativeBoolToBooleanObject(evalEquals(left, right))
+	case operator == "!=":
+		return nativeBoolToBooleanObject(!evalEquals(left, right))
 	case operator == "+" && (left.Type() == object.STRING_OBJ || right.Type() == object.STRING_OBJ):
 		return &object.String{Value: left.Inspect() + right.Inspect()}
 	case left.Type() == object.INTEGER_OBJ && right.Type() == object.INTEGER_OBJ:
@@ -235,14 +314,31 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 		return evalFloatInfixExpression(operator, left, right)
 	case left.Type() == object.STRING_OBJ && right.Type() == object.STRING_OBJ:
 		return evalStringInfixExpression(operator, left, right)
-	case operator == "==":
-		return nativeBoolToBooleanObject(left.Inspect() == right.Inspect())
-	case operator == "!=":
-		return nativeBoolToBooleanObject(left.Inspect() != right.Inspect())
 	case left.Type() != right.Type():
 		return newError("type mismatch: %s %s %s", left.Type(), operator, right.Type())
 	default:
 		return newError("unknown operator: %s %s %s", left.Type(), operator, right.Type())
+	}
+}
+
+func evalEquals(left, right object.Object) bool {
+	if left.Type() != right.Type() {
+		return false
+	}
+
+	switch l := left.(type) {
+	case *object.Integer:
+		return l.Value == right.(*object.Integer).Value
+	case *object.Float:
+		return l.Value == right.(*object.Float).Value
+	case *object.String:
+		return l.Value == right.(*object.String).Value
+	case *object.Boolean:
+		return l.Value == right.(*object.Boolean).Value
+	case *object.Null:
+		return true
+	default:
+		return left.Inspect() == right.Inspect()
 	}
 }
 
@@ -269,11 +365,23 @@ func evalFloatInfixExpression(operator string, left, right object.Object) object
 	case "*":
 		return &object.Float{Value: leftVal * rightVal}
 	case "/":
+		if rightVal == 0 {
+			return newError("division by zero")
+		}
 		return &object.Float{Value: leftVal / rightVal}
+	case "%":
+		if rightVal == 0 {
+			return newError("modulo by zero")
+		}
+		return &object.Float{Value: float64(int64(leftVal) % int64(rightVal))}
 	case "<":
 		return nativeBoolToBooleanObject(leftVal < rightVal)
+	case "<=":
+		return nativeBoolToBooleanObject(leftVal <= rightVal)
 	case ">":
 		return nativeBoolToBooleanObject(leftVal > rightVal)
+	case ">=":
+		return nativeBoolToBooleanObject(leftVal >= rightVal)
 	case "==":
 		return nativeBoolToBooleanObject(leftVal == rightVal)
 	case "!=":
@@ -295,8 +403,14 @@ func evalIntegerInfixExpression(operator string, left, right object.Object) obje
 	case "*":
 		return &object.Integer{Value: leftVal * rightVal}
 	case "/":
+		if rightVal == 0 {
+			return newError("division by zero")
+		}
 		return &object.Integer{Value: leftVal / rightVal}
 	case "%":
+		if rightVal == 0 {
+			return newError("modulo by zero")
+		}
 		return &object.Integer{Value: leftVal % rightVal}
 	case "&":
 		return &object.Integer{Value: leftVal & rightVal}
@@ -581,7 +695,10 @@ func evalExpressions(exps []ast.Expression, env *object.Environment) []object.Ob
 func applyFunction(env *object.Environment, fn object.Object, args []object.Object) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
-		extendedEnv := extendFunctionEnv(fn, args)
+		extendedEnv, err := extendFunctionEnv(fn, args)
+		if err != nil {
+			return err
+		}
 		evaluated := Eval(fn.Body, extendedEnv)
 		return unwrapReturnValue(evaluated)
 
@@ -593,12 +710,37 @@ func applyFunction(env *object.Environment, fn object.Object, args []object.Obje
 	}
 }
 
-func extendFunctionEnv(fn *object.Function, args []object.Object) *object.Environment {
-	env := object.NewEnclosedEnvironment(fn.Env)
-	for paramIdx, param := range fn.Parameters {
-		env.Set(param.Value, args[paramIdx])
+func extendFunctionEnv(fn *object.Function, args []object.Object) (*object.Environment, object.Object) {
+	depth := 0
+	curr := fn.Env
+	for curr != nil {
+		depth++
+		curr = curr.Outer()
 	}
-	return env
+	if depth > 500 {
+		return nil, newError("Maximum call stack size exceeded")
+	}
+
+	env := object.NewEnclosedEnvironment(fn.Env)
+
+	for paramIdx, param := range fn.Parameters {
+		if paramIdx < len(args) {
+			env.Set(param.Value, args[paramIdx])
+		} else if fn.Defaults != nil {
+			if defaultExpr, ok := fn.Defaults[param.Value]; ok {
+				defVal := Eval(defaultExpr, env) // Use env so subsequent defaults can reference previous params
+				if isError(defVal) {
+					return nil, defVal
+				}
+				env.Set(param.Value, defVal)
+			} else {
+				env.Set(param.Value, NULL)
+			}
+		} else {
+			env.Set(param.Value, NULL)
+		}
+	}
+	return env, nil
 }
 
 func unwrapReturnValue(obj object.Object) object.Object {
@@ -674,7 +816,7 @@ func evalGlobalStatement(node *ast.GlobalStatement, env *object.Environment) obj
 		return val
 	}
 	env.Root().Set(node.Name.Value, val)
-	return nil
+	return NULL
 }
 
 func evalImportStatement(node *ast.ImportStatement, env *object.Environment) object.Object {
@@ -688,7 +830,7 @@ func evalImportStatement(node *ast.ImportStatement, env *object.Environment) obj
 	}
 
 	env.Set(node.Alias, module)
-	return nil
+	return NULL
 }
 
 func evalSpawnStatement(node *ast.SpawnStatement, env *object.Environment) object.Object {
@@ -711,7 +853,7 @@ func evalSpawnStatement(node *ast.SpawnStatement, env *object.Environment) objec
 		applyFunction(env, fn, args)
 	}()
 
-	return nil
+	return NULL
 }
 
 func newError(format string, a ...interface{}) *object.Error {

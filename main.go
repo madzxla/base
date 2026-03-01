@@ -9,7 +9,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -108,6 +107,7 @@ func registerAllBuiltins() {
 	evaluator.RegisterNotifyBuiltins()
 	evaluator.RegisterChannelBuiltins()
 	evaluator.RegisterWSBuiltins()
+	evaluator.RegisterRegexBuiltins()
 }
 
 func printHelp() {
@@ -125,28 +125,66 @@ func printHelp() {
 	fmt.Printf("  base run                      Run project from base.json\n")
 	fmt.Printf("  base uninstall                Remove base from system\n\n")
 
+	fmt.Printf("%sLANGUAGE FEATURES:%s\n", Yellow, Reset)
+	fmt.Printf("  %snull%s             null keyword, null coalescing (??)\n", Cyan, Reset)
+	fmt.Printf("  %stemplate strings%s `Hello ${name}` with expression interpolation\n", Cyan, Reset)
+	fmt.Printf("  %sarrow functions%s  (x) => x * 2, (a, b) => { return a + b }\n", Cyan, Reset)
+	fmt.Printf("  %sdefault params%s   function(x, msg = \"Hello\") { ... }\n", Cyan, Reset)
+	fmt.Printf("  %sdestructuring%s    let {a, b} = hash, let [x, y] = array\n", Cyan, Reset)
+	fmt.Printf("  %sspread operator%s  [...list1, ...list2]\n", Cyan, Reset)
+	fmt.Printf("  %smatch/switch%s     match value { case 1: { ... } default: { ... } }\n", Cyan, Reset)
+	fmt.Printf("  %senums%s            enum Color { RED, GREEN, BLUE }\n", Cyan, Reset)
+	fmt.Printf("  %srange%s            range(0, 10), range(0, 10, 2)\n\n", Cyan, Reset)
+
 	fmt.Printf("%sCORE MODULES:%s\n", Yellow, Reset)
-	fmt.Printf("  %shttp%s     get, post, put, patch, delete, ping\n", Cyan, Reset)
-	fmt.Printf("  %sdb%s       connect, query, insert, update, delete, exec, aggregate\n", Cyan, Reset)
-	fmt.Printf("  %sserver%s   listen, static\n", Cyan, Reset)
-	fmt.Printf("  %sfile%s     read, write, append, exists, delete, list, mkdir, replace\n", Cyan, Reset)
-	fmt.Printf("  %scrypto%s   uuid, hash, encrypt_file, decrypt_file\n", Cyan, Reset)
-	fmt.Printf("  %ssys%s      exec, timestamp, version\n", Cyan, Reset)
-	fmt.Printf("  %smath%s     abs, sqrt, pow, round, sin, cos, log\n", Cyan, Reset)
-	fmt.Printf("  %sstring%s   upper, lower, replace, slice, pad_left\n", Cyan, Reset)
-	fmt.Printf("  %slist%s     map, filter, sort, contains, length\n", Cyan, Reset)
-	fmt.Printf("  %sencode%s   base64\n", Cyan, Reset)
-	fmt.Printf("  %sdecode%s   base64\n", Cyan, Reset)
-	fmt.Printf("  %scsv%s       read\n", Cyan, Reset)
-	fmt.Printf("  %syaml%s      write\n", Cyan, Reset)
+	fmt.Printf("  %shttp%s      get, post, put, patch, delete, ping\n", Cyan, Reset)
+	fmt.Printf("  %sdb%s        connect, query, insert, insert_many, update, delete, exec, aggregate\n", Cyan, Reset)
+	fmt.Printf("  %sserver%s    listen, static, route, start, get, post, put, patch, delete, middleware, group\n", Cyan, Reset)
+	fmt.Printf("  %sfile%s      read, write, append, exists, delete, list, mkdir, replace, json_update\n", Cyan, Reset)
+	fmt.Printf("  %scrypto%s    uuid, hash, encrypt_file, decrypt_file\n", Cyan, Reset)
+	fmt.Printf("  %ssys%s       exec, timestamp, version\n", Cyan, Reset)
+	fmt.Printf("  %smath%s      abs, sqrt, pow, round, sin, cos, log, min, max, floor, ceil, random\n", Cyan, Reset)
+	fmt.Printf("  %sstring%s    upper, lower, replace, slice, pad_left, split, trim, contains, starts_with, ends_with, index_of\n", Cyan, Reset)
+	fmt.Printf("  %slist%s      map, filter, sort, contains, length, reverse, reduce, join, slice, flat, push, index_of\n", Cyan, Reset)
+	fmt.Printf("  %sjson%s      parse, stringify\n", Cyan, Reset)
+	fmt.Printf("  %sencode%s    base64\n", Cyan, Reset)
+	fmt.Printf("  %sdecode%s    base64\n", Cyan, Reset)
+	fmt.Printf("  %scsv%s       read, write\n", Cyan, Reset)
+	fmt.Printf("  %syaml%s      read, write\n", Cyan, Reset)
+	fmt.Printf("  %sregex%s     match, find, find_all, replace, split\n", Cyan, Reset)
 	fmt.Printf("  %sssh%s       exec remote commands\n", Cyan, Reset)
+	fmt.Printf("  %sws%s        connect (WebSocket client)\n", Cyan, Reset)
 	fmt.Printf("  %snotify%s    discord, email\n", Cyan, Reset)
 	fmt.Printf("  %sschedule%s  recurring jobs\n", Cyan, Reset)
-	fmt.Printf("  %schan%s      thread-safe channels\n\n", Cyan, Reset)
+	fmt.Printf("  %schan%s      thread-safe channels\n", Cyan, Reset)
+	fmt.Printf("  %sarchive%s   zip\n\n", Cyan, Reset)
+
+	fmt.Printf("%sSERVER (Express-style):%s\n", Yellow, Reset)
+	fmt.Printf("  server.route(path, handler)        Register a route\n")
+	fmt.Printf("  server.start(port)                 Start server with all routes\n")
+	fmt.Printf("  server.get(port, path, handler)    GET-only route (auto-starts)\n")
+	fmt.Printf("  server.post(port, path, handler)   POST-only route (auto-starts)\n")
+	fmt.Printf("  server.put(port, path, handler)    PUT-only route (auto-starts)\n")
+	fmt.Printf("  server.patch(port, path, handler)  PATCH-only route (auto-starts)\n")
+	fmt.Printf("  server.delete(port, path, handler) DELETE-only route (auto-starts)\n")
+	fmt.Printf("  server.static(port, dir)           Serve static files\n")
+	fmt.Printf("  server.middleware(handler)          Add global middleware\n")
+	fmt.Printf("  server.group(prefix, fn)           Group routes under a prefix\n")
+	fmt.Printf("  server.listen(port, path, handler) Route + auto-start (legacy)\n\n")
+
+	fmt.Printf("%sRESPONSE HELPERS (in handler):%s\n", Yellow, Reset)
+	fmt.Printf("  res.send(status, body)     JSON response\n")
+	fmt.Printf("  res.json(status, data)     Pretty JSON response\n")
+	fmt.Printf("  res.html(status, content)  HTML response\n")
+	fmt.Printf("  res.text(status, content)  Plain text response\n")
+	fmt.Printf("  res.file(status, path)     File response (auto MIME)\n")
+	fmt.Printf("  res.redirect(status, url)  Redirect response\n")
+	fmt.Printf("  res.header(key, value)     Set response header\n")
+	fmt.Printf("  res.cors(origin?)          Enable CORS headers\n\n")
 
 	fmt.Printf("%sUTILITIES:%s\n", Yellow, Reset)
-	fmt.Printf("  log(msg, lvl?)   Wait(sec)      Type(v)  \n")
-	fmt.Printf("  print(args..)    wait_all()     env.get(n)\n\n")
+	fmt.Printf("  log(msg, lvl?)   wait(sec)      type(v)      range(start, end, step?)\n")
+	fmt.Printf("  print(args..)    wait_all()     env.get(n)   len(str)\n\n")
 
 	fmt.Printf("%sEXAMPLES:%s\n", Yellow, Reset)
 	fmt.Printf("  base script.base              Run a script\n")
@@ -156,7 +194,7 @@ func printHelp() {
 }
 
 func checkFile(filename string) {
-	content, err := ioutil.ReadFile(filename)
+	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Printf("Error reading file %s: %s\n", filename, err)
 		os.Exit(1)
@@ -195,6 +233,10 @@ func uninstallBase() {
 }
 
 func scaffoldProject(name string) {
+	if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		fmt.Printf("Error: project name must not contain path separators or '..'\n")
+		os.Exit(1)
+	}
 	dir := name
 	os.MkdirAll(dir, 0755)
 
@@ -202,60 +244,51 @@ func scaffoldProject(name string) {
 		"name":  name,
 		"entry": "main.base",
 	}
-	configBytes, _ := json.MarshalIndent(config, "", "  ")
-	ioutil.WriteFile(filepath.Join(dir, "base.json"), configBytes, 0644)
+	configBytes, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		fmt.Printf("Error: failed to generate project config: %s\n", err.Error())
+		os.Exit(1)
+	}
+	os.WriteFile(filepath.Join(dir, "base.json"), configBytes, 0644)
 
 	mainContent := `log("Hello from " + "` + name + `!");
 `
-	ioutil.WriteFile(filepath.Join(dir, "main.base"), []byte(mainContent), 0644)
+	os.WriteFile(filepath.Join(dir, "main.base"), []byte(mainContent), 0644)
 
 	publicDir := filepath.Join(dir, "public")
 	os.MkdirAll(publicDir, 0755)
 	htmlContent := `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>` + name + `</title>
-<link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>` + name + `</title>
 </head>
 <body>
-<h1>` + name + `</h1>
-<p>Powered by B.A.S.E.</p>
-<script src="app.js"></script>
+    <h1>` + name + `</h1>
+    <p>Powered by B.A.S.E.</p>
 </body>
 </html>`
-	ioutil.WriteFile(filepath.Join(publicDir, "index.html"), []byte(htmlContent), 0644)
-
-	cssContent := `* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #0a0a0a; color: #fff; }
-h1 { font-size: 48px; background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-p { color: #888; margin-top: 8px; }
-`
-	ioutil.WriteFile(filepath.Join(publicDir, "style.css"), []byte(cssContent), 0644)
-
-	jsContent := `console.log("B.A.S.E. app loaded");
-`
-	ioutil.WriteFile(filepath.Join(publicDir, "app.js"), []byte(jsContent), 0644)
+	os.WriteFile(filepath.Join(publicDir, "index.html"), []byte(htmlContent), 0644)
 
 	serverContent := `server.static(3000, "./public");
 log("Server running at http://localhost:3000");
 `
-	ioutil.WriteFile(filepath.Join(dir, "server.base"), []byte(serverContent), 0644)
+	os.WriteFile(filepath.Join(dir, "server.base"), []byte(serverContent), 0644)
 
 	fmt.Printf("\n%s✓%s Created project '%s%s%s'\n", Green, Reset, Cyan, name, Reset)
 	fmt.Printf("  %sFiles:%s\n", Yellow, Reset)
 	fmt.Printf("    %sbase.json%s       — project config\n", Green, Reset)
 	fmt.Printf("    %smain.base%s       — entry point\n", Green, Reset)
 	fmt.Printf("    %sserver.base%s     — web server\n", Green, Reset)
-	fmt.Printf("    %spublic/%s         — static files (HTML/CSS/JS)\n", Green, Reset)
+	fmt.Printf("    %spublic/index.html%s — simple landing page\n", Green, Reset)
 	fmt.Printf("\n  %sGet started:%s\n", Yellow, Reset)
 	fmt.Printf("    cd %s && %sbase main.base%s\n", name, Cyan, Reset)
 	fmt.Printf("    cd %s && %sbase server.base%s\n\n", name, Cyan, Reset)
 }
 
 func runFromConfig() {
-	content, err := ioutil.ReadFile("base.json")
+	content, err := os.ReadFile("base.json")
 	if err != nil {
 		fmt.Println("No base.json found in current directory.")
 		fmt.Println("Run 'base new <name>' to create a project, or create base.json manually.")
@@ -293,12 +326,20 @@ func evalString(input string) {
 	registerAllBuiltins()
 	registerImportHandler()
 	env := object.NewEnvironment()
-	evaluated := evaluator.Eval(program, env)
 
-	if evaluated != nil && evaluated.Type() == object.ERROR_OBJ {
-		fmt.Println(evaluated.Inspect())
-		os.Exit(1)
-	}
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("B.A.S.E Engine Panic: %v\n", r)
+				os.Exit(1)
+			}
+		}()
+		evaluated := evaluator.Eval(program, env)
+		if evaluated != nil && evaluated.Type() == object.ERROR_OBJ {
+			fmt.Println(evaluated.Inspect())
+			os.Exit(1)
+		}
+	}()
 
 	if evaluator.KeepAlive {
 		quit := make(chan os.Signal, 1)
@@ -308,7 +349,7 @@ func evalString(input string) {
 }
 
 func runFile(filename string) {
-	content, err := ioutil.ReadFile(filename)
+	content, err := os.ReadFile(filename)
 	if err != nil {
 		fmt.Printf("Error reading file %s: %s\n", filename, err)
 		os.Exit(1)
@@ -329,12 +370,20 @@ func runFile(filename string) {
 	registerAllBuiltins()
 	registerImportHandler()
 	env := object.NewEnvironment()
-	evaluated := evaluator.Eval(program, env)
 
-	if evaluated != nil && evaluated.Type() == object.ERROR_OBJ {
-		fmt.Println(evaluated.Inspect())
-		os.Exit(1)
-	}
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("B.A.S.E Engine Panic: %v\n", r)
+				os.Exit(1)
+			}
+		}()
+		evaluated := evaluator.Eval(program, env)
+		if evaluated != nil && evaluated.Type() == object.ERROR_OBJ {
+			fmt.Println(evaluated.Inspect())
+			os.Exit(1)
+		}
+	}()
 
 	if evaluator.KeepAlive {
 		quit := make(chan os.Signal, 1)
@@ -345,7 +394,7 @@ func runFile(filename string) {
 
 func registerImportHandler() {
 	evaluator.ImportHandler = func(path string) (object.Object, error) {
-		content, err := ioutil.ReadFile(path)
+		content, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}
@@ -359,7 +408,20 @@ func registerImportHandler() {
 		}
 
 		env := object.NewEnvironment()
-		evaluator.Eval(program, env)
+
+		err = func() (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("B.A.S.E Engine Panic: %v", r)
+				}
+			}()
+			evaluator.Eval(program, env)
+			return nil
+		}()
+
+		if err != nil {
+			return nil, err
+		}
 
 		return env.Export(), nil
 	}

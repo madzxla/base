@@ -24,6 +24,10 @@ func Start(in io.Reader, out io.Writer) {
 		}
 
 		line := scanner.Text()
+		if line == "exit" || line == "quit" {
+			return
+		}
+
 		l := lexer.New(line)
 		p := parser.New(l)
 
@@ -33,11 +37,18 @@ func Start(in io.Reader, out io.Writer) {
 			continue
 		}
 
-		evaluated := evaluator.Eval(program, env)
-		if evaluated != nil {
-			io.WriteString(out, evaluated.Inspect())
-			io.WriteString(out, "\n")
-		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					io.WriteString(out, fmt.Sprintf("B.A.S.E Engine Panic: %v\n", r))
+				}
+			}()
+			evaluated := evaluator.Eval(program, env)
+			if evaluated != nil {
+				io.WriteString(out, evaluated.Inspect())
+				io.WriteString(out, "\n")
+			}
+		}()
 	}
 }
 

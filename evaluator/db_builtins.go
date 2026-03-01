@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"sync"
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
@@ -13,7 +15,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var dbConnections = make(map[string]interface{})
+var (
+	dbConnections = make(map[string]interface{})
+	dbMu          sync.RWMutex
+)
 
 func RegisterDBBuiltins() {
 	builtins["db.connect"] = &object.Builtin{
@@ -32,6 +37,9 @@ func RegisterDBBuiltins() {
 			alias := aliasObj.Value
 			driver := driverObj.Value
 			dsn := dsnObj.Value
+
+			dbMu.Lock()
+			defer dbMu.Unlock()
 
 			if driver == "mongodb" {
 				client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(dsn))
@@ -62,7 +70,9 @@ func RegisterDBBuiltins() {
 			}
 			alias := aliasObj.Value
 			query := queryObj.Value
+			dbMu.RLock()
 			conn, exists := dbConnections[alias]
+			dbMu.RUnlock()
 			if !exists {
 				return newError("no connection found: %s", alias)
 			}
@@ -96,7 +106,9 @@ func RegisterDBBuiltins() {
 			target := targetObj.Value
 			data := args[2]
 
+			dbMu.RLock()
 			conn, exists := dbConnections[alias]
+			dbMu.RUnlock()
 			if !exists {
 				return newError("no connection for alias: %s", alias)
 			}
@@ -111,11 +123,11 @@ func RegisterDBBuiltins() {
 				placeholders := []string{}
 				vals := []interface{}{}
 				for k, v := range hash.Pairs {
-					keys = append(keys, k)
+					keys = append(keys, quoteIdentifier(k))
 					placeholders = append(placeholders, "?")
 					vals = append(vals, baseObjectToGoType(v))
 				}
-				query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", target, stringsJoin(keys, ","), stringsJoin(placeholders, ","))
+				query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", quoteIdentifier(target), stringsJoin(keys, ","), stringsJoin(placeholders, ","))
 				_, err := c.Exec(query, vals...)
 				if err != nil {
 					return newError("sql insert error: %s", err.Error())
@@ -141,7 +153,9 @@ func RegisterDBBuiltins() {
 				return newError("first argument to `db.query` must be STRING")
 			}
 			alias := aliasObj.Value
+			dbMu.RLock()
 			conn, exists := dbConnections[alias]
+			dbMu.RUnlock()
 			if !exists {
 				return newError("no connection for alias: %s", alias)
 			}
@@ -162,7 +176,10 @@ func RegisterDBBuiltins() {
 					return newError("sql query error: %s", err.Error())
 				}
 				defer rows.Close()
-				cols, _ := rows.Columns()
+				cols, err := rows.Columns()
+				if err != nil {
+					return newError("sql columns error: %s", err.Error())
+				}
 				results := []object.Object{}
 				for rows.Next() {
 					vals := make([]interface{}, len(cols))
@@ -179,17 +196,28 @@ func RegisterDBBuiltins() {
 				}
 				return &object.Array{Elements: results}
 			case *mongo.Client:
-				coll := c.Database("test").Collection(args[1].(*object.String).Value)
+				collNameObj, ok := args[1].(*object.String)
+				if !ok {
+					return newError("collection name for `db.query` must be STRING")
+				}
+				coll := c.Database("test").Collection(collNameObj.Value)
 				filter := make(map[string]interface{})
 				if len(args) > 2 {
-					filter = baseObjectToGoType(args[2]).(map[string]interface{})
+					filterObj := baseObjectToGoType(args[2])
+					filterMap, ok := filterObj.(map[string]interface{})
+					if !ok {
+						return newError("filter argument to `db.query` must be a HASH")
+					}
+					filter = filterMap
 				}
 				cursor, err := coll.Find(context.TODO(), filter)
 				if err != nil {
 					return newError("mongodb find error: %s", err.Error())
 				}
 				var results []interface{}
-				cursor.All(context.TODO(), &results)
+				if err := cursor.All(context.TODO(), &results); err != nil {
+					return newError("mongodb cursor error: %s", err.Error())
+				}
 				return goTypeToBaseObject(results)
 			}
 			return NULL
@@ -211,7 +239,12 @@ func RegisterDBBuiltins() {
 			match := baseObjectToGoType(args[2])
 			update := baseObjectToGoType(args[3])
 
-			conn, _ := dbConnections[alias]
+			dbMu.RLock()
+			conn, exists := dbConnections[alias]
+			dbMu.RUnlock()
+			if !exists {
+				return newError("no connection for alias: %s", alias)
+			}
 			switch c := conn.(type) {
 			case *sql.DB:
 				return newError("SQL update via HASH not implemented; use db.exec for now")
@@ -231,11 +264,21 @@ func RegisterDBBuiltins() {
 			if len(args) < 3 {
 				return newError("wrong number of arguments. got=%d, want=3", len(args))
 			}
-			alias := args[0].(*object.String).Value
-			target := args[1].(*object.String).Value
+			aliasObj, ok1 := args[0].(*object.String)
+			targetObj, ok2 := args[1].(*object.String)
+			if !ok1 || !ok2 {
+				return newError("first two arguments to `db.delete` must be STRING")
+			}
+			alias := aliasObj.Value
+			target := targetObj.Value
 			match := baseObjectToGoType(args[2])
 
-			conn, _ := dbConnections[alias]
+			dbMu.RLock()
+			conn, exists := dbConnections[alias]
+			dbMu.RUnlock()
+			if !exists {
+				return newError("no connection for alias: %s", alias)
+			}
 			switch c := conn.(type) {
 			case *sql.DB:
 				return newError("SQL delete via HASH not implemented; use db.exec for now")
@@ -267,11 +310,18 @@ func RegisterDBBuiltins() {
 				return newError("third argument to `db.insert_many` must be ARRAY")
 			}
 
-			conn, _ := dbConnections[alias]
+			dbMu.RLock()
+			conn, exists := dbConnections[alias]
+			dbMu.RUnlock()
+			if !exists {
+				return newError("no connection for alias: %s", alias)
+			}
 			switch c := conn.(type) {
 			case *sql.DB:
 				for _, el := range arr.Elements {
-					builtins["db.insert"].Fn(env, args[0], args[1], el)
+					if result := builtins["db.insert"].Fn(env, args[0], args[1], el); isError(result) {
+						return result
+					}
 				}
 			case *mongo.Client:
 				coll := c.Database("test").Collection(target)
@@ -293,11 +343,21 @@ func RegisterDBBuiltins() {
 			if len(args) < 3 {
 				return newError("wrong number of arguments. got=%d, want=3", len(args))
 			}
-			alias := args[0].(*object.String).Value
-			target := args[1].(*object.String).Value
+			aliasObj, ok1 := args[0].(*object.String)
+			targetObj, ok2 := args[1].(*object.String)
+			if !ok1 || !ok2 {
+				return newError("first two arguments to `db.aggregate` must be STRING")
+			}
+			alias := aliasObj.Value
+			target := targetObj.Value
 			pipeline := baseObjectToGoType(args[2])
 
-			conn, _ := dbConnections[alias]
+			dbMu.RLock()
+			conn, exists := dbConnections[alias]
+			dbMu.RUnlock()
+			if !exists {
+				return newError("no connection for alias: %s", alias)
+			}
 			if c, ok := conn.(*mongo.Client); ok {
 				coll := c.Database("test").Collection(target)
 				cursor, err := coll.Aggregate(context.TODO(), pipeline)
@@ -305,12 +365,18 @@ func RegisterDBBuiltins() {
 					return newError("mongodb aggregate error: %s", err.Error())
 				}
 				var res []interface{}
-				cursor.All(context.TODO(), &res)
+				if err := cursor.All(context.TODO(), &res); err != nil {
+					return newError("mongodb cursor error: %s", err.Error())
+				}
 				return goTypeToBaseObject(res)
 			}
 			return newError("aggregate is only supported for NoSQL (MongoDB) at the moment")
 		},
 	}
+}
+
+func quoteIdentifier(name string) string {
+	return "\"" + strings.ReplaceAll(name, "\"", "\"\"") + "\""
 }
 
 func stringsJoin(s []string, sep string) string {

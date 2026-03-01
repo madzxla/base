@@ -295,8 +295,9 @@ func (ie *IfExpression) String() string {
 
 
 type FunctionLiteral struct {
-	Token      token.Token 
+	Token      token.Token
 	Parameters []*Identifier
+	Defaults   map[string]Expression // parameter name -> default value
 	Body       *BlockStatement
 }
 
@@ -590,7 +591,7 @@ func (ss *SpawnStatement) String() string {
 
 
 type TernaryExpression struct {
-	Token       token.Token 
+	Token       token.Token
 	Condition   Expression
 	Consequence Expression
 	Alternative Expression
@@ -600,7 +601,6 @@ func (te *TernaryExpression) expressionNode()      {}
 func (te *TernaryExpression) TokenLiteral() string { return te.Token.Literal }
 func (te *TernaryExpression) String() string {
 	var out bytes.Buffer
-
 	out.WriteString("(")
 	out.WriteString(te.Condition.String())
 	out.WriteString(" ? ")
@@ -608,6 +608,125 @@ func (te *TernaryExpression) String() string {
 	out.WriteString(" : ")
 	out.WriteString(te.Alternative.String())
 	out.WriteString(")")
-
 	return out.String()
 }
+
+type NullLiteral struct {
+	Token token.Token
+}
+
+func (nl *NullLiteral) expressionNode()      {}
+func (nl *NullLiteral) TokenLiteral() string { return nl.Token.Literal }
+func (nl *NullLiteral) String() string       { return "null" }
+
+// TemplateLiteral represents `hello ${name}` template strings
+type TemplateLiteral struct {
+	Token token.Token
+	Parts []Expression // StringLiterals and expressions interleaved
+}
+
+func (tl *TemplateLiteral) expressionNode()      {}
+func (tl *TemplateLiteral) TokenLiteral() string { return tl.Token.Literal }
+func (tl *TemplateLiteral) String() string {
+	return "`" + tl.Token.Literal + "`"
+}
+
+// ArrowFunctionLiteral represents (x) => x * 2 or (x) => { ... }
+type ArrowFunctionLiteral struct {
+	Token      token.Token
+	Parameters []*Identifier
+	Body       *BlockStatement
+	Expression Expression // for single-expression arrows
+}
+
+func (af *ArrowFunctionLiteral) expressionNode()      {}
+func (af *ArrowFunctionLiteral) TokenLiteral() string { return af.Token.Literal }
+func (af *ArrowFunctionLiteral) String() string {
+	var out bytes.Buffer
+	params := []string{}
+	for _, p := range af.Parameters {
+		params = append(params, p.String())
+	}
+	out.WriteString("(")
+	out.WriteString(strings.Join(params, ", "))
+	out.WriteString(") => ")
+	if af.Body != nil {
+		out.WriteString(af.Body.String())
+	} else if af.Expression != nil {
+		out.WriteString(af.Expression.String())
+	}
+	return out.String()
+}
+
+type DefaultParam struct {
+	Name    *Identifier
+	Default Expression
+}
+
+// MatchExpression represents match value { case x: ... default: ... }
+type MatchExpression struct {
+	Token   token.Token
+	Subject Expression
+	Cases   []*MatchCase
+	Default *BlockStatement
+}
+
+type MatchCase struct {
+	Values []Expression
+	Body   *BlockStatement
+}
+
+func (me *MatchExpression) expressionNode()      {}
+func (me *MatchExpression) TokenLiteral() string { return me.Token.Literal }
+func (me *MatchExpression) String() string {
+	return "match(...)"
+}
+
+// SpreadExpression represents ...expr
+type SpreadExpression struct {
+	Token token.Token
+	Value Expression
+}
+
+func (se *SpreadExpression) expressionNode()      {}
+func (se *SpreadExpression) TokenLiteral() string { return se.Token.Literal }
+func (se *SpreadExpression) String() string {
+	return "..." + se.Value.String()
+}
+
+// DestructureLetStatement represents let {a, b} = expr or let [a, b] = expr
+type DestructureLetStatement struct {
+	Token  token.Token
+	Names  []string
+	IsHash bool // true = {a,b}, false = [a,b]
+	Value  Expression
+}
+
+func (ds *DestructureLetStatement) statementNode()       {}
+func (ds *DestructureLetStatement) TokenLiteral() string { return ds.Token.Literal }
+func (ds *DestructureLetStatement) String() string {
+	return "let destructure = ..."
+}
+
+// RangeExpression represents range(start, end) or range(start, end, step)
+type RangeExpression struct {
+	Token token.Token
+	Start Expression
+	End   Expression
+	Step  Expression
+}
+
+func (re *RangeExpression) expressionNode()      {}
+func (re *RangeExpression) TokenLiteral() string { return re.Token.Literal }
+func (re *RangeExpression) String() string       { return "range(...)" }
+
+// EnumStatement represents enum Name { A, B, C }
+type EnumStatement struct {
+	Token   token.Token
+	Name    string
+	Members []string
+}
+
+func (es *EnumStatement) statementNode()       {}
+func (es *EnumStatement) TokenLiteral() string { return es.Token.Literal }
+func (es *EnumStatement) String() string       { return "enum " + es.Name }

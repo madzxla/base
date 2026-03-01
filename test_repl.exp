@@ -1,0 +1,10 @@
+spawn ./base
+expect ">> "
+send "let a = \r"
+expect ">> "
+send "1;\r"
+expect ">> "
+send "print(a)\r"
+expect ">> "
+send "exit\r"
+expect eof

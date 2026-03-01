@@ -2,8 +2,8 @@ package evaluator
 
 import (
 	"base/object"
-	"io/ioutil"
 	"net"
+	"os"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -14,12 +14,19 @@ func RegisterSSHBuiltins() {
 			if len(args) != 4 {
 				return newError("wrong number of arguments. got=%d, want=4", len(args))
 			}
-			host := args[0].(*object.String).Value
-			user := args[1].(*object.String).Value
-			keyPath := args[2].(*object.String).Value
-			command := args[3].(*object.String).Value
+			hostObj, ok1 := args[0].(*object.String)
+			userObj, ok2 := args[1].(*object.String)
+			keyPathObj, ok3 := args[2].(*object.String)
+			commandObj, ok4 := args[3].(*object.String)
+			if !ok1 || !ok2 || !ok3 || !ok4 {
+				return newError("all arguments to `ssh.exec` must be STRING")
+			}
+			host := hostObj.Value
+			user := userObj.Value
+			keyPath := keyPathObj.Value
+			command := commandObj.Value
 
-			key, err := ioutil.ReadFile(keyPath)
+			key, err := os.ReadFile(keyPath)
 			if err != nil {
 				return newError("unable to read private key: %v", err)
 			}

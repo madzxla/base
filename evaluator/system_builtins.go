@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/robfig/cron/v3"
 )
@@ -47,12 +48,27 @@ func RegisterSystemBuiltins() {
 			}
 			source, ok1 := args[0].(*object.String)
 			target, ok2 := args[1].(*object.String)
-
 			if !ok1 || !ok2 {
 				return newError("arguments to `archive.zip` must be (STRING, STRING)")
 			}
 
-			err := zipSource(source.Value, target.Value)
+			absSource, err := filepath.Abs(source.Value)
+			if err != nil {
+				return newError("invalid source path: %s", err.Error())
+			}
+			absTarget, err := filepath.Abs(target.Value)
+			if err != nil {
+				return newError("invalid target path: %s", err.Error())
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return newError("could not determine working directory: %s", err.Error())
+			}
+			if !strings.HasPrefix(absSource, cwd) || !strings.HasPrefix(absTarget, cwd) {
+				return newError("security: access denied to path outside project root")
+			}
+
+			err = zipSource(absSource, absTarget)
 			if err != nil {
 				return newError("archive error: %s", err.Error())
 			}

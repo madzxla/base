@@ -3,13 +3,14 @@ package evaluator
 import (
 	"base/object"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -152,7 +153,27 @@ func RegisterBackendBuiltins() {
 			if !ok {
 				return newError("argument to `file.read` must be STRING")
 			}
-			content, err := ioutil.ReadFile(filePath.Value)
+			absPath, err := filepath.Abs(filePath.Value)
+			if err != nil {
+				return newError("invalid path: %s", err.Error())
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return newError("could not determine working directory: %s", err.Error())
+			}
+			if !strings.HasPrefix(absPath, cwd) {
+				return newError("security: access denied to file outside project root: %s", filePath.Value)
+			}
+
+			info, err := os.Stat(absPath)
+			if err != nil {
+				return newError("could not read file info: %s", err.Error())
+			}
+			if info.Size() > 100*1024*1024 { // 100MB limit
+				return newError("file too large to read (max 100MB)")
+			}
+
+			content, err := os.ReadFile(absPath)
 			if err != nil {
 				return newError("could not read file: %s", err.Error())
 			}
@@ -175,12 +196,31 @@ func RegisterBackendBuiltins() {
 			case *object.String:
 				content = []byte(arg.Value)
 			case *object.Hash, *object.Array:
-				content, _ = json.MarshalIndent(baseObjectToGoType(arg), "", "  ")
+				var jsonErr error
+				content, jsonErr = json.MarshalIndent(baseObjectToGoType(arg), "", "  ")
+				if jsonErr != nil {
+					return newError("file.write: failed to marshal value: %s", jsonErr.Error())
+				}
 			default:
 				content = []byte(arg.Inspect())
 			}
 
-			err := ioutil.WriteFile(filePath.Value, content, 0644)
+			absPath, err := filepath.Abs(filePath.Value)
+			if err != nil {
+				return newError("invalid path: %s", err.Error())
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return newError("could not determine working directory: %s", err.Error())
+			}
+			if !strings.HasPrefix(absPath, cwd) {
+				return newError("security: access denied to file outside project root: %s", filePath.Value)
+			}
+
+			if len(content) > 100*1024*1024 {
+				return newError("file.write: content too large (max 100MB)")
+			}
+			err = os.WriteFile(absPath, content, 0644)
 			if err != nil {
 				return newError("could not write file: %s", err.Error())
 			}
@@ -198,7 +238,22 @@ func RegisterBackendBuiltins() {
 			if !ok1 || !ok2 {
 				return newError("arguments to `file.append` must be STRING")
 			}
-			f, err := os.OpenFile(path.Value, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			absPath, err := filepath.Abs(path.Value)
+			if err != nil {
+				return newError("invalid path: %s", err.Error())
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return newError("could not determine working directory: %s", err.Error())
+			}
+			if !strings.HasPrefix(absPath, cwd) {
+				return newError("security: access denied to file outside project root: %s", path.Value)
+			}
+
+			if len(content.Value) > 100*1024*1024 {
+				return newError("file.append: content too large (max 100MB)")
+			}
+			f, err := os.OpenFile(absPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			if err != nil {
 				return newError("could not open file: %s", err.Error())
 			}
@@ -221,12 +276,24 @@ func RegisterBackendBuiltins() {
 			if !ok1 || !ok2 || !ok3 {
 				return newError("arguments to `file.replace` must be STRING")
 			}
-			content, err := ioutil.ReadFile(path.Value)
+			absPath, err := filepath.Abs(path.Value)
+			if err != nil {
+				return newError("invalid path: %s", err.Error())
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return newError("could not determine working directory: %s", err.Error())
+			}
+			if !strings.HasPrefix(absPath, cwd) {
+				return newError("security: access denied to file outside project root: %s", path.Value)
+			}
+
+			content, err := os.ReadFile(absPath)
 			if err != nil {
 				return newError("could not read file: %s", err.Error())
 			}
 			replaced := strings.ReplaceAll(string(content), oldText.Value, newText.Value)
-			err = ioutil.WriteFile(path.Value, []byte(replaced), 0644)
+			err = os.WriteFile(absPath, []byte(replaced), 0644)
 			if err != nil {
 				return newError("could not write file: %s", err.Error())
 			}
@@ -245,20 +312,43 @@ func RegisterBackendBuiltins() {
 				return newError("arguments to `file.json_update` must be (STRING, HASH)")
 			}
 
-			content, _ := ioutil.ReadFile(path.Value)
+			absPath, err := filepath.Abs(path.Value)
+			if err != nil {
+				return newError("invalid path: %s", err.Error())
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return newError("could not determine working directory: %s", err.Error())
+			}
+			if !strings.HasPrefix(absPath, cwd) {
+				return newError("security: access denied to file outside project root: %s", path.Value)
+			}
+
+			content, err := os.ReadFile(absPath)
+			if err != nil {
+				return newError("could not read file: %s", err.Error())
+			}
 			var data map[string]interface{}
-			json.Unmarshal(content, &data)
-			if data == nil {
+			if err := json.Unmarshal(content, &data); err != nil {
+				// If file is empty or invalid JSON, start fresh
 				data = make(map[string]interface{})
 			}
 
-			updateData := baseObjectToGoType(update).(map[string]interface{})
+			updateData, ok := baseObjectToGoType(update).(map[string]interface{})
+			if !ok {
+				return newError("file.update: update value must be a HASH")
+			}
 			for k, v := range updateData {
 				data[k] = v
 			}
 
-			newContent, _ := json.MarshalIndent(data, "", "  ")
-			ioutil.WriteFile(path.Value, newContent, 0644)
+			newContent, err := json.MarshalIndent(data, "", "  ")
+			if err != nil {
+				return newError("could not marshal JSON: %s", err.Error())
+			}
+			if err := os.WriteFile(absPath, newContent, 0644); err != nil {
+				return newError("could not write file: %s", err.Error())
+			}
 			return TRUE
 		},
 	}
@@ -272,7 +362,19 @@ func RegisterBackendBuiltins() {
 			if !ok {
 				return newError("argument to `file.exists` must be STRING")
 			}
-			_, err := os.Stat(path.Value)
+			absPath, err := filepath.Abs(path.Value)
+			if err != nil {
+				return &object.Boolean{Value: false}
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return &object.Boolean{Value: false}
+			}
+			if !strings.HasPrefix(absPath, cwd) {
+				return &object.Boolean{Value: false}
+			}
+
+			_, err = os.Stat(absPath)
 			return &object.Boolean{Value: err == nil}
 		},
 	}
@@ -286,7 +388,21 @@ func RegisterBackendBuiltins() {
 			if !ok {
 				return newError("argument to `file.mkdir` must be STRING")
 			}
-			os.MkdirAll(path.Value, 0755)
+			absPath, err := filepath.Abs(path.Value)
+			if err != nil {
+				return newError("invalid path: %s", err.Error())
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return newError("could not determine working directory: %s", err.Error())
+			}
+			if !strings.HasPrefix(absPath, cwd) {
+				return newError("security: access denied to path outside project root: %s", path.Value)
+			}
+
+			if err := os.MkdirAll(absPath, 0755); err != nil {
+				return newError("could not create directory: %s", err.Error())
+			}
 			return TRUE
 		},
 	}
@@ -300,7 +416,21 @@ func RegisterBackendBuiltins() {
 			if !ok {
 				return newError("argument to `file.delete` must be STRING")
 			}
-			os.RemoveAll(path.Value)
+			absPath, err := filepath.Abs(path.Value)
+			if err != nil {
+				return newError("invalid path: %s", err.Error())
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return newError("could not determine working directory: %s", err.Error())
+			}
+			if !strings.HasPrefix(absPath, cwd) {
+				return newError("security: access denied to file outside project root: %s", path.Value)
+			}
+
+			if err := os.RemoveAll(absPath); err != nil {
+				return newError("could not delete: %s", err.Error())
+			}
 			return TRUE
 		},
 	}
@@ -314,7 +444,22 @@ func RegisterBackendBuiltins() {
 			if !ok {
 				return newError("argument to `file.list` must be STRING")
 			}
-			files, _ := ioutil.ReadDir(path.Value)
+			absPath, err := filepath.Abs(path.Value)
+			if err != nil {
+				return newError("invalid path: %s", err.Error())
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return newError("could not determine working directory: %s", err.Error())
+			}
+			if !strings.HasPrefix(absPath, cwd) {
+				return newError("security: access denied to path outside project root: %s", path.Value)
+			}
+
+			files, err := os.ReadDir(absPath)
+			if err != nil {
+				return newError("could not list directory: %s", err.Error())
+			}
 			elements := make([]object.Object, len(files))
 			for i, f := range files {
 				elements[i] = &object.String{Value: f.Name()}
@@ -328,12 +473,17 @@ func RegisterBackendBuiltins() {
 			if len(args) < 1 {
 				return newError("wrong number of arguments. got=%d, want=1+", len(args))
 			}
-			cmdString, _ := args[0].(*object.String)
+			cmdString, ok := args[0].(*object.String)
+			if !ok {
+				return newError("first argument to `sys.exec` must be STRING")
+			}
 			var cmdArgs []string
 			for _, arg := range args[1:] {
 				cmdArgs = append(cmdArgs, arg.Inspect())
 			}
-			cmd := exec.Command(cmdString.Value, cmdArgs...)
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, cmdString.Value, cmdArgs...)
 			out, _ := cmd.CombinedOutput()
 			return &object.String{Value: string(out)}
 		},
@@ -344,7 +494,10 @@ func RegisterBackendBuiltins() {
 			if len(args) == 0 {
 				return &object.Integer{Value: time.Now().Unix()}
 			}
-			format, _ := args[0].(*object.String)
+			format, ok := args[0].(*object.String)
+			if !ok {
+				return newError("argument to `sys.timestamp` must be STRING")
+			}
 			goFormat := time.RFC3339
 			switch format.Value {
 			case "YYYY-MM-DD":
@@ -365,7 +518,10 @@ func RegisterBackendBuiltins() {
 			if len(args) != 1 {
 				return newError("wrong number of arguments. got=%d, want=1", len(args))
 			}
-			name, _ := args[0].(*object.String)
+			name, ok := args[0].(*object.String)
+			if !ok {
+				return newError("argument to `env.get` must be STRING")
+			}
 			return &object.String{Value: os.Getenv(name.Value)}
 		},
 	}
@@ -381,6 +537,8 @@ func RegisterBackendBuiltins() {
 				seconds = float64(arg.Value)
 			case *object.Float:
 				seconds = arg.Value
+			default:
+				return newError("argument to `wait` must be INTEGER or FLOAT")
 			}
 			time.Sleep(time.Duration(seconds * float64(time.Second)))
 			return NULL
@@ -447,10 +605,16 @@ func doHTTPRequest(method string, urlStr string, body object.Object, opts *objec
 		var bodyReader io.Reader
 		if body != nil {
 			if hash, ok := body.(*object.Hash); ok {
-				jsonBytes, _ := json.Marshal(baseObjectToGoType(hash))
+				jsonBytes, err := json.Marshal(baseObjectToGoType(hash))
+				if err != nil {
+					return newError("http: failed to marshal request body: %s", err.Error())
+				}
 				bodyReader = bytes.NewBuffer(jsonBytes)
 			} else if arr, ok := body.(*object.Array); ok {
-				jsonBytes, _ := json.Marshal(baseObjectToGoType(arr))
+				jsonBytes, err := json.Marshal(baseObjectToGoType(arr))
+				if err != nil {
+					return newError("http: failed to marshal request body: %s", err.Error())
+				}
 				bodyReader = bytes.NewBuffer(jsonBytes)
 			} else if str, ok := body.(*object.String); ok {
 				bodyReader = bytes.NewBufferString(str.Value)
@@ -481,8 +645,11 @@ func doHTTPRequest(method string, urlStr string, body object.Object, opts *objec
 			}
 			return newError("http.%s error after %d retries: %s", strings.ToLower(method), retries, err.Error())
 		}
-		defer resp.Body.Close()
-		resBody, _ := ioutil.ReadAll(resp.Body)
+		resBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return newError("http: failed to read response body: %s", err.Error())
+		}
 
 		return &object.Hash{
 			Pairs: map[string]object.Object{

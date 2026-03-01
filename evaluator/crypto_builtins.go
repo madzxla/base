@@ -9,7 +9,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"os"
 
 	"github.com/google/uuid"
 )
@@ -73,7 +73,7 @@ func RegisterCryptoBuiltins() {
 				return newError("arguments to `crypto.encrypt_file` must be (STRING, STRING, STRING)")
 			}
 
-			plaintext, err := ioutil.ReadFile(filePath.Value)
+			plaintext, err := os.ReadFile(filePath.Value)
 			if err != nil {
 				return newError("could not read file: %s", err.Error())
 			}

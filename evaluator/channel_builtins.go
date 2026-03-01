@@ -18,6 +18,10 @@ func RegisterChannelBuiltins() {
 						return newError("chan.send needs exactly 1 argument")
 					}
 					ch.mu.Lock()
+					if len(ch.items) >= 10000 {
+						ch.mu.Unlock()
+						return newError("chan.send: channel capacity exceeded (max 10,000 items)")
+					}
 					ch.items = append(ch.items, innerArgs[0])
 					ch.mu.Unlock()
 					return NULL

@@ -3,6 +3,7 @@ package evaluator
 import (
 	"base/object"
 	"math"
+	"math/rand"
 	"strings"
 )
 
@@ -145,6 +146,132 @@ func RegisterStdBuiltins() {
 		},
 	}
 
+	builtins["math.min"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) < 2 {
+				return newError("wrong number of arguments. got=%d, want=2+", len(args))
+			}
+			getFloat := func(obj object.Object) (float64, bool) {
+				if i, ok := obj.(*object.Integer); ok {
+					return float64(i.Value), true
+				}
+				if f, ok := obj.(*object.Float); ok {
+					return f.Value, true
+				}
+				return 0, false
+			}
+			minVal, ok := getFloat(args[0])
+			if !ok {
+				return newError("arguments to `math.min` must be numeric")
+			}
+			allInt := args[0].Type() == object.INTEGER_OBJ
+			for _, arg := range args[1:] {
+				v, ok := getFloat(arg)
+				if !ok {
+					return newError("arguments to `math.min` must be numeric")
+				}
+				if arg.Type() != object.INTEGER_OBJ {
+					allInt = false
+				}
+				if v < minVal {
+					minVal = v
+				}
+			}
+			if allInt {
+				return &object.Integer{Value: int64(minVal)}
+			}
+			return &object.Float{Value: minVal}
+		},
+	}
+
+	builtins["math.max"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) < 2 {
+				return newError("wrong number of arguments. got=%d, want=2+", len(args))
+			}
+			getFloat := func(obj object.Object) (float64, bool) {
+				if i, ok := obj.(*object.Integer); ok {
+					return float64(i.Value), true
+				}
+				if f, ok := obj.(*object.Float); ok {
+					return f.Value, true
+				}
+				return 0, false
+			}
+			maxVal, ok := getFloat(args[0])
+			if !ok {
+				return newError("arguments to `math.max` must be numeric")
+			}
+			allInt := args[0].Type() == object.INTEGER_OBJ
+			for _, arg := range args[1:] {
+				v, ok := getFloat(arg)
+				if !ok {
+					return newError("arguments to `math.max` must be numeric")
+				}
+				if arg.Type() != object.INTEGER_OBJ {
+					allInt = false
+				}
+				if v > maxVal {
+					maxVal = v
+				}
+			}
+			if allInt {
+				return &object.Integer{Value: int64(maxVal)}
+			}
+			return &object.Float{Value: maxVal}
+		},
+	}
+
+	builtins["math.floor"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return newError("wrong number of arguments. got=%d, want=1", len(args))
+			}
+			if f, ok := args[0].(*object.Float); ok {
+				return &object.Integer{Value: int64(math.Floor(f.Value))}
+			}
+			if i, ok := args[0].(*object.Integer); ok {
+				return i
+			}
+			return newError("argument to `math.floor` must be numeric")
+		},
+	}
+
+	builtins["math.ceil"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return newError("wrong number of arguments. got=%d, want=1", len(args))
+			}
+			if f, ok := args[0].(*object.Float); ok {
+				return &object.Integer{Value: int64(math.Ceil(f.Value))}
+			}
+			if i, ok := args[0].(*object.Integer); ok {
+				return i
+			}
+			return newError("argument to `math.ceil` must be numeric")
+		},
+	}
+
+	builtins["math.random"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) == 0 {
+				return &object.Float{Value: rand.Float64()}
+			}
+			if len(args) == 2 {
+				min, ok1 := args[0].(*object.Integer)
+				max, ok2 := args[1].(*object.Integer)
+				if !ok1 || !ok2 {
+					return newError("arguments to `math.random` must be INTEGER")
+				}
+				if min.Value >= max.Value {
+					return newError("max must be greater than min in `math.random(min, max)`")
+				}
+				return &object.Integer{Value: min.Value + rand.Int63n(max.Value-min.Value+1)}
+			}
+			return newError("wrong number of arguments. got=%d, want=0 or 2", len(args))
+		},
+	}
+
 	builtins["type"] = &object.Builtin{
 		Fn: func(env *object.Environment, args ...object.Object) object.Object {
 			if len(args) != 1 {
@@ -203,7 +330,6 @@ func RegisterStdBuiltins() {
 				return newError("wrong number of arguments. got=%d, want=2 or 3", len(args))
 			}
 
-			// Auto-convert first argument to string
 			inputStr := args[0].Inspect()
 			if s, ok := args[0].(*object.String); ok {
 				inputStr = s.Value
@@ -244,7 +370,6 @@ func RegisterStdBuiltins() {
 				return newError("wrong number of arguments. got=%d, want=3", len(args))
 			}
 
-			// Auto-convert first argument to string
 			inputStr := args[0].Inspect()
 			if s, ok := args[0].(*object.String); ok {
 				inputStr = s.Value
@@ -268,6 +393,103 @@ func RegisterStdBuiltins() {
 			}
 
 			return &object.String{Value: str}
+		},
+	}
+
+	builtins["string.split"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return newError("wrong number of arguments. got=%d, want=2", len(args))
+			}
+			s, ok1 := args[0].(*object.String)
+			delim, ok2 := args[1].(*object.String)
+			if !ok1 || !ok2 {
+				return newError("arguments to `string.split` must be STRING")
+			}
+			parts := strings.Split(s.Value, delim.Value)
+			elements := make([]object.Object, len(parts))
+			for i, p := range parts {
+				elements[i] = &object.String{Value: p}
+			}
+			return &object.Array{Elements: elements}
+		},
+	}
+
+	builtins["string.trim"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) != 1 {
+				return newError("wrong number of arguments. got=%d, want=1", len(args))
+			}
+			s, ok := args[0].(*object.String)
+			if !ok {
+				return newError("argument to `string.trim` must be STRING")
+			}
+			return &object.String{Value: strings.TrimSpace(s.Value)}
+		},
+	}
+
+	builtins["string.contains"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return newError("wrong number of arguments. got=%d, want=2", len(args))
+			}
+			s, ok1 := args[0].(*object.String)
+			substr, ok2 := args[1].(*object.String)
+			if !ok1 || !ok2 {
+				return newError("arguments to `string.contains` must be STRING")
+			}
+			if strings.Contains(s.Value, substr.Value) {
+				return TRUE
+			}
+			return FALSE
+		},
+	}
+
+	builtins["string.starts_with"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return newError("wrong number of arguments. got=%d, want=2", len(args))
+			}
+			s, ok1 := args[0].(*object.String)
+			prefix, ok2 := args[1].(*object.String)
+			if !ok1 || !ok2 {
+				return newError("arguments to `string.starts_with` must be STRING")
+			}
+			if strings.HasPrefix(s.Value, prefix.Value) {
+				return TRUE
+			}
+			return FALSE
+		},
+	}
+
+	builtins["string.ends_with"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return newError("wrong number of arguments. got=%d, want=2", len(args))
+			}
+			s, ok1 := args[0].(*object.String)
+			suffix, ok2 := args[1].(*object.String)
+			if !ok1 || !ok2 {
+				return newError("arguments to `string.ends_with` must be STRING")
+			}
+			if strings.HasSuffix(s.Value, suffix.Value) {
+				return TRUE
+			}
+			return FALSE
+		},
+	}
+
+	builtins["string.index_of"] = &object.Builtin{
+		Fn: func(env *object.Environment, args ...object.Object) object.Object {
+			if len(args) != 2 {
+				return newError("wrong number of arguments. got=%d, want=2", len(args))
+			}
+			s, ok1 := args[0].(*object.String)
+			substr, ok2 := args[1].(*object.String)
+			if !ok1 || !ok2 {
+				return newError("arguments to `string.index_of` must be STRING")
+			}
+			return &object.Integer{Value: int64(strings.Index(s.Value, substr.Value))}
 		},
 	}
 

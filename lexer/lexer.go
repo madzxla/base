@@ -44,6 +44,10 @@ func (l *Lexer) NextToken() token.Token {
 			ch := l.ch
 			l.readChar()
 			tok = token.Token{Type: token.EQ, Literal: string(ch) + string(l.ch)}
+		} else if l.peekChar() == '>' {
+			ch := l.ch
+			l.readChar()
+			tok = token.Token{Type: token.ARROW, Literal: string(ch) + string(l.ch)}
 		} else {
 			tok = newToken(token.ASSIGN, l.ch)
 		}
@@ -98,7 +102,13 @@ func (l *Lexer) NextToken() token.Token {
 	case '~':
 		tok = newToken(token.BIT_NOT, l.ch)
 	case '?':
-		tok = newToken(token.QUESTION, l.ch)
+		if l.peekChar() == '?' {
+			ch := l.ch
+			l.readChar()
+			tok = token.Token{Type: token.NULL_COALESCE, Literal: string(ch) + string(l.ch)}
+		} else {
+			tok = newToken(token.QUESTION, l.ch)
+		}
 	case ':':
 		tok = newToken(token.COLON, l.ch)
 	case ';':
@@ -106,7 +116,13 @@ func (l *Lexer) NextToken() token.Token {
 	case ',':
 		tok = newToken(token.COMMA, l.ch)
 	case '.':
-		tok = newToken(token.DOT, l.ch)
+		if l.peekChar() == '.' && l.readPosition+1 < len(l.input) && l.input[l.readPosition+1] == '.' {
+			l.readChar()
+			l.readChar()
+			tok = token.Token{Type: token.SPREAD, Literal: "..."}
+		} else {
+			tok = newToken(token.DOT, l.ch)
+		}
 	case '(':
 		tok = newToken(token.LPAREN, l.ch)
 	case ')':
@@ -119,6 +135,9 @@ func (l *Lexer) NextToken() token.Token {
 		tok = newToken(token.LBRACKET, l.ch)
 	case ']':
 		tok = newToken(token.RBRACKET, l.ch)
+	case '`':
+		tok.Type = token.BACKTICK
+		tok.Literal = l.readTemplateString()
 	case '"', '\'':
 		tok.Type = token.STRING
 		tok.Literal = l.readString(l.ch)
@@ -184,28 +203,85 @@ func (l *Lexer) readIdentifier() string {
 }
 
 func (l *Lexer) readString(quote byte) string {
-	position := l.position + 1
+	var out []byte
 	for {
 		l.readChar()
-		if l.ch == '\\' && l.peekChar() == quote {
-			l.readChar()
+		if l.ch == '\\' {
+			next := l.peekChar()
+			switch next {
+			case 'n':
+				out = append(out, '\n')
+				l.readChar()
+			case 't':
+				out = append(out, '\t')
+				l.readChar()
+			case 'r':
+				out = append(out, '\r')
+				l.readChar()
+			case '\\':
+				out = append(out, '\\')
+				l.readChar()
+			case quote:
+				out = append(out, quote)
+				l.readChar()
+			default:
+				out = append(out, l.ch)
+			}
 			continue
 		}
 		if l.ch == quote || l.ch == 0 {
 			break
 		}
+		out = append(out, l.ch)
 	}
-	return l.input[position:l.position]
+	return string(out)
+}
+
+func (l *Lexer) readTemplateString() string {
+	var out []byte
+	for {
+		l.readChar()
+		if l.ch == '`' || l.ch == 0 {
+			break
+		}
+		if l.ch == '\\' {
+			next := l.peekChar()
+			switch next {
+			case 'n':
+				out = append(out, '\n')
+				l.readChar()
+			case 't':
+				out = append(out, '\t')
+				l.readChar()
+			case '`':
+				out = append(out, '`')
+				l.readChar()
+			case '\\':
+				out = append(out, '\\')
+				l.readChar()
+			default:
+				out = append(out, l.ch)
+			}
+			continue
+		}
+		// ${...} is kept literally — the parser/evaluator will handle interpolation
+		out = append(out, l.ch)
+	}
+	return string(out)
 }
 
 func (l *Lexer) readNumber() (token.TokenType, string) {
 	position := l.position
 	isFloat := false
-	for isDigit(l.ch) || l.ch == '.' {
-		if l.ch == '.' {
-			isFloat = true
-		}
+	for isDigit(l.ch) {
 		l.readChar()
+	}
+	if l.ch == '.' && isDigit(l.peekChar()) {
+		isFloat = true
+		l.readChar() // consume the '.'
+		for isDigit(l.ch) {
+			l.readChar()
+		}
 	}
 
 	if isFloat {
