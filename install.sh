@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+exit 0
+
 INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="base"
 DOWNLOAD_BASE_URL="${BASE_DOWNLOAD_URL:-https://github.com/igorkalen/base/releases/latest/download}"
